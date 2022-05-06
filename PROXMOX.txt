@@ -1,0 +1,311 @@
+How to update Proxmox without a subscription
+
+
+prox
+sed -i.backup -z "s/res === null || res === undefined || \!res || res\n\t\t\t.data.status.toLowerCase() \!== 'active'/false/g" /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js && systemctl restart pveproxy.service
+
+
+
+backup
+sed -i.backup -z "s/res === null || res === undefined || \!res || res\n\t\t\t.data.status.toLowerCase() \!== 'active'/false/g" /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js && systemctl restart proxmox-backup-proxy
+
+
+zcat pfsense.img.gz | dd of=/dev/sd[a] bs=16k
+
+
+
+qm importdisk <vmid> yourimage.qcow2 namestoragepool
+qm importdisk 101 fileserver.qcow2 local-lvm
+qm rescan
+
+
+
+wget -qO proxmox_toolbox.sh https://raw.githubusercontent.com/Tontonjo/proxmox_toolbox/main/proxmox_toolbox.sh
+
+bash proxmox_toolbox.sh
+
+
+
+
+
+
+
+nano /etc/apt/sources.list
+-------------------------------------------------------------------------------------------------
+deb http://ftp.debian.org/debian bullseye main contrib
+deb http://ftp.debian.org/debian bullseye-updates main contrib
+
+# PVE pve-no-subscription repository provided by proxmox.com,
+# NOT recommended for production use
+deb http://download.proxmox.com/debian/pve bullseye pve-no-subscription
+
+# security updates
+deb http://security.debian.org/debian-security bullseye-security main contrib
+------------------------------------------------------------------------------------------------
+
+nano /etc/apt/sources.list.d/pve-enterprise.list
+
+Dodać # przed wpis
+
+sudo apt-get update && sudo apt-get dist-upgrade -y
+
+
+reboot
+
+------------------------------------------------------------------------------------------------
+How to configure Proxmox storage (ZFS + RAID10)
+
+Usówanie LVM oraz zwiększnie partycji local
+lvremove /dev/pve/data
+lvresize -l +100%FREE /dev/pve/root
+resize2fs /dev/mapper/pve-root
+
+Jeśli jakieś dyski są zainicjowanie:
+wipefs --all --force /dev/nvme1n1 /dev/sda 	#lub inny litera dysku
+
+fdisk -l 	#lista dysków
+fdisk /dev/sda 	#czyszczenie partycji i tablic gpt
+p - lista partycji
+d - delete
+1-9 - nr partycji
+w - write
+
+
+TAPE-BACKUP -> DRIVES błąd:In my case I've got the error:
+Code:
+command '/sbin/sgdisk -n1 -t1:8300 /dev/sdb' failed: exit code 3
+This was due to a dos partition table.
+Your drive must have a GPT partition table.
+After converting my partition table to GPT the problem was solved
+
+tu zrobiłem : fdisk /dev/sdc + czysty dysk i tylko GPT zaiinicjować już w WEBpanel
+
+proxmox-backup-manager datastore list
+
+GIT
+---------------------------------------------------------------------------------------------------
+
+How to setup SMART monitoring with proxmox
+
+samrtctl -a /dev/sda #dla wszystkich dysków serwerze
+
+-------------------------------------------------------------------------------------------------------
+
+How to turn on PCI Passthrough with Proxmox (IOMMU)
+
+IOMMU w biosie jak nie idzie instalacja 
+
+nano /etc/default/grub
+IOMMU
+
+nano /etc/modules
+
+dodać wpisy:
+vfio
+vfio_iommu_type1
+vfio_pci
+vfio_virqfd
+
+reboot
+
+In AMI Bios go to 'Chipset' ->North Bridge->'Intel (R) VT for Directed I/O Configuration'->Intel(R) VT-d (enable)
+
+-----------------------------------------------------------------------------------------------------------
+
+How to use VLANs with Proxmox and VLAN Aware
+
+PROXMOX > SYSTEM > NETWORK > Linux Bridge > EDIT vLAN Aware 
+
+nano /etc/network/interfaces
+
+vLAN iDs daje nam na maszynach wirtualnych ID karty sieciowej 
+
+---------------------------------------------------------------------------------------------------------------
+
+How to set up a NFS share with Proxmox
+
+Najpierw trzeba ustawić TRUENAS
+1. Update
+2. Account > lub i Groups
+3.1 Storage > Pools > ADD
+3.2 (3) kropczeki przy dysku/udziale > ADD Dataset > dodajemy folder na kopie np BACKUP lub inny
+4.1 Unix Shares (NFS) > ADD > Advanced Options > Mappall User do Root 
+4.2 Authorized Hosts and IP adresses > IP Proxmoxa lub jego nazwa
+5. Widnows Shares (SMB) > Private SMB Dataset and Shares #daje to osobne foldery do każdego użytkownia
+6. Services > FTP? ; NFS ; SMART ; SMB ; SSH
+
+
+
+POTEM ROBIMY KOPIE ZAPASOWE:
+STORAGE > ZFS > Create
+ 
+ściezka jesli kopia jest poza PROXMOX:
+/mnt/(nazwa_dysku)/(nazwa_folderu)
+
+ściezka jesli kopia jest na PROXMOX:
+(nazwa_folderu)
+A WKLEJAMY SAMĄ NAZWĘ DYSKU/UDZIAŁU ZFS 
+
+
+
+jesli są problemy z acess denied:
+https://forum.proxmox.com/threads/cant-use-nfs-share.53463/
+
+So, after getting this error "mkdir /mnt/nfs-backup01/images: Permission denied at /usr/share/perl5/PVE/Storage/Plugin.pm line 954. (500)" when trying to add my NFS share on FreeNAS for backups, 
+I manually added the server via "pvesm add nfs backup01 --server=10.x.x.x --export=/mnt/pool01 --path=/mnt/nfs-backup01". Once I had that added, and it did at least add without errors, I get the same "mkdir /mnt/nfs-backup01/images: Permission denied at /usr/share/perl5/PVE/Storage/Plugin.pm line 954. (500)" When I navigate to that storage device under one of the nodes in the Web UI. Any ideas out there?
+
+I've self-resolved! In FreeNAS, under the share settings, I experimentally set the mapall users setting to root, which makes anyone using that directory access it with root permissions. The issue then went away, giving me full access to the share. To further lock down the security, I created a "Proxmox" user with write permissions, and mapall-users'd that user to the share. Issue resolved!
+
+
+
+
+
+---------------------------------------------------------------------------------------------------------------
+Dodajemy połączenie WINSCP i wrzucamy obrazy systemów oraz VirtIO ISO
+
+Tworzymy wszystkie wirtualne maszyny i ustawiamy je, potem aktualizujemy i instalujemy sterowniki oraz oprogramowanie
+
+How to back up a virtual machine on Proxmox (initial backup)
+
+Zawsze robimy  RĘĆZNIE kopie po ustawieniu Wirtualnej maszyny
+
+
+
+
+
+---------------------------------------------------------------------------------------------------------------
+
+How to schedule backups with Proxmox
+
+Datacenter > Backup > Add
+dodajemy harmonogram kopii
+
+---------------------------------------------------------------------------------------------------------------
+USTAWIANIE DWÓCH KART SIECIOWYCH
+How to create a NIC team (LACP, LAG) on Proxmox
+How to set up an aggregate (LACP, Team) on Unifi Switch Pro
+How to edit your NIC bond in Proxmox for NIC teaming
+
+
+nano /etc/network/interfaces
+###############################################################
+#auto lo
+#iface lo inet loopback
+#iface enp8s0 inet manual
+#auto vmbr0
+#iface vmbr0 inet static
+        address 192.168.1.100/24
+        gateway 192.168.1.1
+        bridge_ports enp8s0
+        bridge_stp off
+        bridge_fd 0
+##################################################################
+iface enp8s0 inet manual ###(lub inna nazwa karty sieciowej eno1 lub eno2
+
+iface enp8s1 inet manual
+
+iface bond0 inet manula
+        bond-slaves enp8s0 enp8s1
+        bond-miimon 100
+        bond-mode 802.3ad
+        bond-xmit-hash-policy layer2+3
+
+auto vmbr0
+iface vmbr0 inet static
+        address 192.168.1.100/24
+        gateway 192.168.1.1
+        bridge_ports bond0
+        bridge_stp off
+        bridge_fd 0
+		bridge_vlan-aware yes
+		bridge_vids 2-4094
+#####################################################################		
+
+Reboot
+
+---------------------------------------------------------------------------------------------------------------
+How to create a virtual machine template on Proxmox
+How to clone a virtual machine in Proxmox
+How to fix Proxmox Linux clone NIC, machine ID, and ssh keys after cloning
+
+
+
+---------------------------------------------------------------------------------------------------------------
+How to create a Proxmox Cluster
+
+DATACENTER > CLUSTER > CREATE CLUSTER
+
+
+DATACENTER > CLUSTER > JOIN CLUSTER
+
+---------------------------------------------------------------------------------------------------------------
+ How to ADD PROXMOX BACKUP SERVER
+ 
+ https://dannyda.com/2020/11/13/how-to-remove-you-do-not-have-a-valid-subscription-for-this-server-from-proxmox-backup-server-pbs-1-0-1/
+
+https://dannyda.com/2020/05/17/how-to-remove-you-do-not-have-a-valid-subscription-for-this-server-from-proxmox-virtual-environment-6-1-2-proxmox-ve-6-1-2-pve-6-1-2/?__cf_chl_tk=e.VPXY2EsXECHxT4d_qhBNB32VmMadcvK_tcSr2qTFk-1636928619-0-gaNycGzNBr0
+
+
+ 
+ 
+ --------------------------------------------------------------------------------------------------------------
+
+
+
+
+
+ip link set [nazwa karty] up 
+nano /etc/network/interfaces
+
+pozmieniać nazwy kart sieciowych
+
+systemctl restart networking
+
+
+
+
+
+bash unifi-5.13.32.sh
+
+
+
+
+
+Hi, the easiest way of doing that would be to create a Sync Job to a Remote (that is not actually a remote, let me explain).
+You can do offsite-copies to other PBS Servers with the "Sync Job" feature for datastores. In this case we want to sync not to a different PBS server, but to our same server with a different (external) drive.
+
+To do this, create a "Remote" in Configuration->Remotes that points to localhost. Then create a datastore on your external HDD, click on that newly created Datastore, go to "Sync Jobs", create a new sync job, choose the "Source Remote" you just created earlier that points to localhost and set "Source Datastore" to the Datastore you want to copy to that external drive.
+
+
+
+
+=========================================================================================================
+proxmox-import-disk-image.txt
+
+
+#
+# The official PVE docs on how to prepare cloud-init templates:
+#   https://pve.proxmox.com/wiki/Cloud-Init_Support#_preparing_cloud_init_templates
+#
+# Additional guides and resources:
+#   https://dae.me/blog/2340/how-to-add-an-existing-virtual-disk-to-proxmox/
+#   https://pve.proxmox.com/pve-docs/qm.1.html
+
+# use the Qemu/KVM Virtual Machine Manager to import the disk
+qm importdisk 107 Univention-App-kopano-core-KVM.qcow2 local-lvm
+
+# rescan all storages and update disk sizes and unused disk images
+qm rescan
+
+# edit the vm config
+# /etc/pve/qemu-server/107.conf 
+bootdisk: scsi1
+scsi0: local-lvm:vm-107-disk-0,size=32G
+scsi1: local-lvm:vm-107-disk-1,size=50G  <--- new image 
+
+# you can use the Proxmox VE Storage Manager
+# to list all newly scanned disks
+pvesm list local-lvm
+
+# show your vm
+qm list
